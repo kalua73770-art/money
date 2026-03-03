@@ -30,7 +30,7 @@ class HindiRequest(BaseModel):
     instruction: str = ""
 
 # Keepalive
-SELF_URL = os.getenv("SELF_URL", "https://money-fgtr.onrender.com")
+SELF_URL = os.getenv("SELF_URL", "https://money-2vpo.onrender.com")
 PING_INTERVAL_MIN = int(os.getenv("PING_INTERVAL_MIN", "14"))
 
 scheduler = BackgroundScheduler()
