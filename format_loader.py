@@ -14,23 +14,6 @@ FORMAT_FOLDER = "Format"
 
 # Mappings for Hindi and English instructions to filenames (more robust partial matches)
 HINDI_MAPPINGS = {
-    "shadi": "Vivahanama.txt",
-    "विवाह": "Vivahanama.txt",
-    "विवाहनामा": "Vivahanama.txt",
-    "शादी": "Vivahanama.txt",
-    "gadi": "Gadiformat.txt",
-    "गाड़ी": "Gadiformat.txt",
-    "गाड़ी agreement": "Gadiformat.txt",
-    "कार": "Gadiformat.txt",
-    "vehicle": "Gadiformat.txt",
-    "jamin": "Jaminbikricnt.txt",  # Default to CNT if not specified
-    "जमीन": "Jaminbikricnt.txt",
-    "जमीन बिक्री": "Jaminbikricnt.txt",
-    "cnt": "Jaminbikricnt.txt",
-    "सीएनटी": "Jaminbikricnt.txt",
-    "non cnt": "Jaminbikrinoncnt.txt",
-    "नॉन सीएनटी": "Jaminbikrinoncnt.txt",
-    "non cnt": "Jaminbikrinoncnt.txt",
     "affidavit": "Awedanaffidavit.txt",
     "शपथ पत्र": "Awedanaffidavit.txt",
     "शपथ-पत्र": "Awedanaffidavit.txt",
