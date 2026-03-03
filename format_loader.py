@@ -26,8 +26,7 @@ HINDI_MAPPINGS = {
 
 ENGLISH_MAPPINGS = {
     "affidavit": "Englishaffidavit.txt",
-    "indemnity bond": "Englishindemnitybond.txt",
-    "satyapan verification": "Englishsatyapanverification.txt",
+    "satyapan": "Englishsatyapanverification.txt",
     "verification": "Englishsatyapanverification.txt",
     # Add more as needed
 }
