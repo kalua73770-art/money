@@ -15,7 +15,7 @@ from format_loader import load_specific_format
 
 logger = logging.getLogger("krutidev-converter")
 
-Gemini config - multiple keys support
+#Gemini config - multiple keys support
 
 GEMINI_API_KEYS: List[str] = [
 k.strip() for k in os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", "")).split(",")
