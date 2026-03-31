@@ -1,262 +1,185 @@
 """
-Main FastAPI application - Clean UI Version (No model name anywhere on website)
+Gemini API client for text correction and document generation.
+Supports dynamic model selection: gemini-2.5-flash-lite (default) or gemini-2.5-flash (thinking_mode).
+Added markdown stripping to remove bold etc. from outputs.
+Added support for multiple API keys to handle quota exhaustion by rotating keys.
+Improved prompts for better punctuation.
 """
 
-from fastapi import FastAPI, Form, Body, HTTPException
-from fastapi.responses import HTMLResponse
-from contextlib import asynccontextmanager
 import os
 import requests
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 import logging
-from typing import Optional
-from pydantic import BaseModel
-from html import escape
+import re
+from typing import List
 
-# Import modular components
-from converters import KrutiDev_to_Unicode, Unicode_to_KrutiDev
-from gemini_client import call_gemini_correct_text
+from format_loader import load_specific_format
 
-# Logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("krutidev-converter")
 
-app = FastAPI()
+# Gemini config - multiple keys support
+GEMINI_API_KEYS: List[str] = [
+    k.strip() for k in os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", "")).split(",")
+    if k.strip()
+]
 
-# Pydantic model for Word macro
-class HindiRequest(BaseModel):
-    hindi_text: str = ""
-    instruction: str = ""
+if not GEMINI_API_KEYS:
+    raise RuntimeError("No GEMINI_API_KEY or GEMINI_API_KEYS set in environment")
 
-# Keepalive
-SELF_URL = os.getenv("SELF_URL", "https://money-2vpo.onrender.com")
-PING_INTERVAL_MIN = int(os.getenv("PING_INTERVAL_MIN", "14"))
+def strip_markdown(text: str) -> str:
+    """
+    Strips common markdown like bold, italic, headers, lists, code blocks to plain text.
+    """
+    # Bold **
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+    # Italic *
+    text = re.sub(r'\*(.*?)\*', r'\1', text)
+    # Headers #
+    text = re.sub(r'^#{1,6}\s*(.*)$', r'\1', text, flags=re.MULTILINE)
+    # Lists - or * or +
+    text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
+    # Code blocks ```
+    text = re.sub(r'```[\s\S]*?```', '', text)
+    # Inline code `
+    text = re.sub(r'`(.*?)`', r'\1', text)
+    return text.strip()
 
-scheduler = BackgroundScheduler()
 
-def ping_self():
+def _make_gemini_call(prompt_text: str, gemini_url: str, pass_name: str = "pass") -> str:
+    """
+    Internal function to make a single Gemini API call with the provided URL.
+    Tries multiple keys on quota errors.
+    """
+    headers_base = {"Content-Type": "application/json"}
+    payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
+
+    for i, api_key in enumerate(GEMINI_API_KEYS):
+        headers = headers_base.copy()
+        headers["x-goog-api-key"] = api_key
+        logger.info(f"Calling Gemini {pass_name} with key index {i+1}/{len(GEMINI_API_KEYS)} using URL: {gemini_url}")
+
+        try:
+            resp = requests.post(gemini_url, headers=headers, json=payload, timeout=60)
+            logger.info(f"Gemini {pass_name} status with key {i+1}: {resp.status_code}")
+
+            if resp.status_code == 200:
+                j = resp.json()
+                try:
+                    result = j["candidates"][0]["content"]["parts"][0]["text"]
+                    logger.info(f"Gemini {pass_name} successful with key {i+1}")
+                    return result.strip()
+                except (KeyError, IndexError) as e:
+                    logger.error(f"Parsing Gemini {pass_name} response error with key {i+1}: {e}")
+                    continue
+            elif resp.status_code == 429:  # Quota exceeded
+                logger.warning(f"Quota exceeded for key {i+1}, trying next")
+                continue
+            else:
+                logger.error(f"Gemini {pass_name} error with key {i+1}: {resp.status_code} {resp.text[:200]}")
+                continue
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error for Gemini {pass_name} with key {i+1}: {e}")
+            continue
+
+    raise RuntimeError(f"All Gemini API keys failed for {pass_name}.")
+
+
+def call_gemini_correct_text(
+    user_text: str,
+    language: str = "hi",
+    instruction: str = "",
+    thinking_mode: bool = False
+) -> str:
+    """
+    Calls Gemini API with dynamic model based on thinking_mode.
+    thinking_mode=True  → gemini-2.5-flash
+    thinking_mode=False → gemini-2.5-flash-lite (default, faster)
+    Uses two-pass approach: correction + review.
+    """
     try:
-        if not SELF_URL:
-            return
-        r = requests.head(SELF_URL, timeout=10)
-        if r.status_code >= 400:
-            requests.get(SELF_URL, timeout=10)
-    except:
-        pass
+        model_name = "gemini-2.5-flash" if thinking_mode else "gemini-2.5-flash-lite"
+        base_url = "https://generativelanguage.googleapis.com/v1beta/models/"
+        default_url = f"{base_url}{model_name}:generateContent"
+        gemini_url = os.getenv("GEMINI_URL", default_url)  # Env override if needed
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    scheduler.add_job(ping_self, IntervalTrigger(minutes=PING_INTERVAL_MIN), id="keepalive", replace_existing=True)
-    scheduler.start()
-    yield
-    scheduler.shutdown(wait=False)
+        format_content = ""
+        use_format = bool(instruction.strip())
 
-app.router.lifespan_context = lifespan
+        if language.startswith("hi"):
+            base_instruction = (
+                "आप एक एडिटिंग और डॉक्यूमेंट जेनरेशन सहायक हैं। केवल टाइपिंग/स्पेलिंग/पंक्चुएशन गलतियाँ सुधारें।\n"
+                "वाक्य संरचना, केस सेक्शन कानूनी भाषा या अर्थ न बदलें।\n"
+                "मार्कडाउन का उपयोग न करें, जैसे **बोल्ड** या *इटैलिक*। सादा टेक्स्ट दें।\n"
+                "नामों के बाद अल्पविराम (,) जोड़ें, जैसे 'ओम प्रकाश यादव,'।\n"
+                "उम्र, ग्राम, पोस्ट, थाना, जिला, राज्य आदि के पहले हाइफन (-) लगाएँ, जैसे 'उम्र-26 वर्ष,' 'ग्राम-बेता,'।\n"
+                "अंत में पूर्ण विराम (।) जोड़ें यदि उपयुक्त हो।\n"
+            )
+            if use_format:
+                format_content = load_specific_format(language, instruction)
+                if format_content:
+                    base_instruction += (
+                        f"निर्देश '{instruction}' के आधार पर दिए गए टेक्स्ट डिटेल्स से डॉक्यूमेंट भरें। फॉर्मेट का उपयोग करें लेकिन केवल रेलेवेंट भाग।\n"
+                        "शर्तों या पॉइंट्स को नंबरिंग से लिखें (1., 2., आदि), बुलेट मार्क्स जैसे * या - का उपयोग न करें।\n"
+                        f"संदर्भ फॉर्मेट: {format_content}\n\n"
+                    )
+                else:
+                    base_instruction += f"निर्देश '{instruction}' के अनुसार डॉक्यूमेंट जेनरेट करें। पंक्चुएशन जोड़ें जैसा ऊपर निर्देशित।\n\n"
+            else:
+                base_instruction += "केवल दिए गए टेक्स्ट को सुधारें, कोई अतिरिक्त फॉर्मेट या डॉक्यूमेंट न जोड़ें।\n\n"
 
-@app.get("/health")
-def health():
-    return {"ok": True}
+            review_instruction = (
+                "नीचे दिए गए सुधारे हुए टेक्स्ट की समीक्षा करें और कोई बची हुई टाइपिंग/स्पेलिंग/पंक्चुएशन गलतियाँ सुधारें।\n"
+                "केवल आवश्यक सुधार करें, अर्थ या संरचना न बदलें। "
+            )
+            if use_format:
+                review_instruction += "यदि जेनरेटेड डॉक्यूमेंट है, तो फॉर्मेट चेक करें, सिर्फ एक डॉक्यूमेंट दें, सारे न लिस्ट करें। बुलेट्स * को नंबरिंग से बदलें। पंक्चुएशन सुनिश्चित करें।\n"
+            review_instruction += "मार्कडाउन न दें, सादा Unicode देवनागरी टेक्स्ट में आउटपुट दें।\n\n"
 
-
-# ================= UI HOME =================
-@app.get("/", response_class=HTMLResponse)
-def home():
-    html = """
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<title>KrutiDev ⇄ Unicode Converter + Ajmat Correct</title>
-<style>
-body {font-family:Arial,sans-serif;max-width:900px;margin:20px auto;padding:12px;}
-textarea {width:100%;box-sizing:border-box;font-family:monospace;font-size:14px;}
-.col {display:flex;gap:12px;}
-.box {flex:1;padding:12px;border:1px solid #ddd;border-radius:8px;}
-label {font-weight:600;display:block;margin-bottom:6px;}
-button {padding:8px 14px;margin-top:8px;}
-.note {font-size:13px;color:#444;margin-top:8px;}
-.instr {font-size:12px;color:#666;}
-</style>
-</head>
-<body>
-
-<h2>KrutiDev ⇄ Unicode + Typo-Corrector & Document Generator</h2>
-
-<div class="col">
-
-<div class="box">
-<form method="post" action="/convert-hindi">
-<label>Hindi (KrutiDev010):</label>
-<textarea name="hindi_text" rows="10"></textarea>
-
-<label>Instruction:</label>
-<textarea name="instruction" rows="3"></textarea>
-
-<label><input type="checkbox" name="thinking_mode" value="on"> बेहतर सुधार मोड</label>
-
-<button type="submit">Convert + Correct</button>
-</form>
-</div>
-
-<div class="box">
-<form method="post" action="/convert-english">
-<label>English:</label>
-<textarea name="english_text" rows="10"></textarea>
-
-<label>Instruction:</label>
-<textarea name="instruction" rows="3"></textarea>
-
-<label><input type="checkbox" name="thinking_mode" value="on"> Advanced Mode</label>
-
-<button type="submit">Correct</button>
-</form>
-</div>
-
-</div>
-
-<hr>
-
-<h3>⚡ Simple Conversion (No AI)</h3>
-<form method="post" action="/convert-simple">
-<label>Text:</label>
-<textarea name="text" rows="6"></textarea>
-
-<label>Conversion Type:</label>
-<select name="mode">
-<option value="k2u">KrutiDev → Mangal</option>
-<option value="u2k">Mangal → KrutiDev</option>
-</select>
-
-<button type="submit">Convert Only</button>
-</form>
-
-<p>Health: <a href="/health">/health</a></p>
-
-</body>
-</html>
-"""
-    return HTMLResponse(html)
-
-
-# ================= SIMPLE UI ROUTE =================
-@app.post("/convert-simple", response_class=HTMLResponse)
-def convert_simple(text: str = Form(...), mode: str = Form(...)):
-    try:
-        if mode == "k2u":
-            result = KrutiDev_to_Unicode(text)
         else:
-            result = Unicode_to_KrutiDev(text)
+            base_instruction = (
+                "You are a copyeditor and document generation assistant. Only fix spelling, typing, punctuation, and capitalization errors.\n"
+                "Do NOT change meaning, structure, or legal terminology.\n"
+                "Do not use markdown like **bold** or *italic*. Plain text only.\n"
+                "Add commas after names, e.g., 'Om Prakash Yadav,'.\n"
+                "Add hyphens before fields like age, village, post, thana, district, state, e.g., 'age-26 years,' 'village-Beta,'.\n"
+                "Add period (.) at the end if appropriate.\n"
+            )
+            if use_format:
+                format_content = load_specific_format(language, instruction)
+                if format_content:
+                    base_instruction += (
+                        f"Based on instruction '{instruction}', fill the document using text details. Use the format but only relevant parts.\n"
+                        "For conditions or points, use numbering (1., 2., etc.), do not use bullet marks like * or -.\n"
+                        f"Reference format: {format_content}\n\n"
+                    )
+                else:
+                    base_instruction += f"Generate document based on instruction '{instruction}'. Add punctuation as instructed above.\n\n"
+            else:
+                base_instruction += "Only correct the given text, do not add any extra formats or documents.\n\n"
 
-        html = f"""
-        <html>
-        <body style="font-family:Arial;max-width:800px;margin:auto;padding:20px;">
-        <h2>Simple Conversion Result</h2>
+            review_instruction = (
+                "Review the following corrected/generated text and fix any remaining spelling, typing, punctuation, or capitalization errors.\n"
+                "Only make necessary fixes; do NOT change meaning or structure. "
+            )
+            if use_format:
+                review_instruction += "If it's a generated document, ensure format compliance, output only one document, not a list. Replace bullets * with numbering. Ensure punctuation.\n"
+            review_instruction += "Output plain text, no markdown.\n\n"
 
-        <h3>Input</h3>
-        <pre>{escape(text)}</pre>
+        full_instruction = base_instruction
+        if instruction.strip():
+            full_instruction += (f"उपयोगकर्ता निर्देश: {instruction}\n\n" if language.startswith("hi") else f"User instruction: {instruction}\n\n")
 
-        <h3>Output</h3>
-        <pre id="out">{escape(result)}</pre>
+        prompt_text = full_instruction + user_text
+        logger.info("Calling Gemini first pass")
+        corrected = _make_gemini_call(prompt_text, gemini_url=gemini_url, pass_name="first pass")
 
-        <button onclick="copy()">Copy</button>
+        review_prompt = review_instruction + corrected
+        logger.info("Calling Gemini second pass")
+        final_corrected = _make_gemini_call(review_prompt, gemini_url=gemini_url, pass_name="second pass")
 
-        <script>
-        function copy(){{
-            navigator.clipboard.writeText(document.getElementById('out').innerText)
-            alert("Copied")
-        }}
-        </script>
+        final_corrected = strip_markdown(final_corrected)
 
-        <p><a href="/">Back</a></p>
-        </body>
-        </html>
-        """
-        return HTMLResponse(html)
-
-    except Exception as e:
-        return HTMLResponse(f"<pre>Error: {str(e)}</pre>", status_code=500)
-
-
-# ================= SIMPLE API ROUTE =================
-@app.post("/api/convert-simple")
-def api_convert_simple(text: str, mode: str):
-    try:
-        if mode == "k2u":
-            result = KrutiDev_to_Unicode(text)
-        elif mode == "u2k":
-            result = Unicode_to_KrutiDev(text)
-        else:
-            raise HTTPException(400, "Invalid mode")
-
-        return {
-            "input": text,
-            "output": result,
-            "mode": mode
-        }
+        return final_corrected
 
     except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-# ================= EXISTING ROUTES (UNCHANGED) =================
-
-@app.post("/convert-hindi", response_class=HTMLResponse)
-def convert_hindi(
-    hindi_text: str = Form(...),
-    instruction: str = Form(""),
-    thinking_mode: Optional[str] = Form(None)
-):
-    try:
-        thinking = thinking_mode == "on"
-
-        unicode_text = KrutiDev_to_Unicode(hindi_text)
-        corrected_unicode = call_gemini_correct_text(
-            unicode_text, language="hi", instruction=instruction, thinking_mode=thinking
-        )
-        corrected_krutidev = Unicode_to_KrutiDev(corrected_unicode)
-
-        return HTMLResponse(f"<pre>{corrected_unicode}</pre>")
-
-    except Exception as e:
-        return HTMLResponse(f"<pre>Error: {str(e)}</pre>", status_code=500)
-
-
-@app.post("/convert-english", response_class=HTMLResponse)
-def convert_english(
-    english_text: str = Form(...),
-    instruction: str = Form(""),
-    thinking_mode: Optional[str] = Form(None)
-):
-    try:
-        thinking = thinking_mode == "on"
-        corrected = call_gemini_correct_text(
-            english_text, language="en", instruction=instruction, thinking_mode=thinking
-        )
-        return HTMLResponse(f"<pre>{corrected}</pre>")
-
-    except Exception as e:
-        return HTMLResponse(f"<pre>Error: {str(e)}</pre>", status_code=500)
-
-
-@app.post("/api/hindi")
-def api_hindi(hindi_text: str, instruction: str = ""):
-    unicode_text = KrutiDev_to_Unicode(hindi_text)
-    corrected_unicode = call_gemini_correct_text(unicode_text, language="hi", instruction=instruction)
-    corrected_krutidev = Unicode_to_KrutiDev(corrected_unicode)
-    return {
-        "input_krutidev": hindi_text,
-        "corrected_mangal": corrected_unicode,
-        "corrected_krutidev": corrected_krutidev,
-    }
-
-
-@app.post("/api/english")
-def api_english(english_text: str, instruction: str = ""):
-    corrected = call_gemini_correct_text(english_text, language="en", instruction=instruction)
-    return {"corrected": corrected}
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+        logger.error(f"call_gemini_correct_text error: {str(e)}", exc_info=True)
+        return user_text  # Fallback to original text
