@@ -15,7 +15,7 @@ from typing import Optional
 from pydantic import BaseModel
 from html import escape
 
-Import modular components
+#Import modular components
 
 from converters import KrutiDev_to_Unicode, Unicode_to_KrutiDev
 from gemini_client import call_gemini_correct_text
@@ -235,6 +235,6 @@ def api_english(english_text: str, instruction: str = ""):
 corrected = call_gemini_correct_text(english_text, language="en", instruction=instruction)
 return {"corrected": corrected}
 
-if name == "main":
+if __name__ == "__main__":
 import uvicorn
 uvicorn.run(app, host="0.0.0.0", port=8000)
