@@ -20,7 +20,7 @@ from html import escape
 from converters import KrutiDev_to_Unicode, Unicode_to_KrutiDev
 from gemini_client import call_gemini_correct_text
 
-Logging
+#Logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("krutidev-converter")
@@ -33,7 +33,7 @@ class HindiRequest(BaseModel):
 hindi_text: str = ""
 instruction: str = ""
 
-Keepalive
+#Keepalive
 
 SELF_URL = os.getenv("SELF_URL", "https://money-2vpo.onrender.com")
 PING_INTERVAL_MIN = int(os.getenv("PING_INTERVAL_MIN", "14"))
