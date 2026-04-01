@@ -1,4 +1,3 @@
-
 """
 Main FastAPI application - Clean UI Version (No model name anywhere on website)
 """
@@ -15,59 +14,59 @@ from typing import Optional
 from pydantic import BaseModel
 from html import escape
 
-#Import modular components
-
+# Import modular components
 from converters import KrutiDev_to_Unicode, Unicode_to_KrutiDev
 from gemini_client import call_gemini_correct_text
 
-#Logging
-
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("krutidev-converter")
 
 app = FastAPI()
 
-#Pydantic model for Word macro
-
+# Pydantic model for Word macro
 class HindiRequest(BaseModel):
-hindi_text: str = ""
-instruction: str = ""
+    hindi_text: str = ""
+    instruction: str = ""
 
-#Keepalive
 
+# Keepalive
 SELF_URL = os.getenv("SELF_URL", "https://money-2vpo.onrender.com")
 PING_INTERVAL_MIN = int(os.getenv("PING_INTERVAL_MIN", "14"))
 
 scheduler = BackgroundScheduler()
 
 def ping_self():
-try:
-if not SELF_URL:
-return
-r = requests.head(SELF_URL, timeout=10)
-if r.status_code >= 400:
-requests.get(SELF_URL, timeout=10)
-except:
-pass
+    try:
+        if not SELF_URL:
+            return
+        r = requests.head(SELF_URL, timeout=10)
+        if r.status_code >= 400:
+            requests.get(SELF_URL, timeout=10)
+    except:
+        pass
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-scheduler.add_job(ping_self, IntervalTrigger(minutes=PING_INTERVAL_MIN), id="keepalive", replace_existing=True)
-scheduler.start()
-yield
-scheduler.shutdown(wait=False)
+    scheduler.add_job(ping_self, IntervalTrigger(minutes=PING_INTERVAL_MIN), id="keepalive", replace_existing=True)
+    scheduler.start()
+    yield
+    scheduler.shutdown(wait=False)
+
 
 app.router.lifespan_context = lifespan
 
+
 @app.get("/health")
 def health():
-return {"ok": True}
+    return {"ok": True}
+
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-html = """
+    html = """
 <!doctype html>
-
 <html lang="en">  
 <head>  
 <meta charset="utf-8"/>  
@@ -97,7 +96,8 @@ button {padding:8px 14px;margin-top:8px;}
 <b>बेहतर सुधार मोड चेक करें (खासकर लंबे डॉक्यूमेंट के लिए)</b></div>  
 <button type="submit">Convert + Correct/Generate</button>  
 </form>  
-</div>  <div class="box">  
+</div>  
+<div class="box">  
 <form method="post" action="/convert-english">  
 <label>English:</label>  
 <textarea name="english_text" rows="10" placeholder="English text..."></textarea>  
@@ -109,31 +109,34 @@ button {padding:8px 14px;margin-top:8px;}
 <button type="submit">Correct/Generate</button>  
 </form>  
 </div>  
-</div>  <p style="margin-top:14px;">Health: <a href="/health">/health</a> | Ping: <a href="/ping">/ping</a></p>  
+</div>  
+<p style="margin-top:14px;">Health: <a href="/health">/health</a> | Ping: <a href="/ping">/ping</a></p>  
 <hr/>  
 <small>Pure Python KrutiDev engine • Format files in Format folder</small>  
 </body>  
 </html>  
-"""  
-    return HTMLResponse(html)  @app.post("/convert-hindi", response_class=HTMLResponse)
+"""
+    return HTMLResponse(html)
+
+
+@app.post("/convert-hindi", response_class=HTMLResponse)
 def convert_hindi(
-hindi_text: str = Form(...),
-instruction: str = Form(""),
-thinking_mode: Optional[str] = Form(None)
+    hindi_text: str = Form(...),
+    instruction: str = Form(""),
+    thinking_mode: Optional[str] = Form(None)
 ):
-try:
-thinking = thinking_mode == "on"
+    try:
+        thinking = thinking_mode == "on"
 
-unicode_text = KrutiDev_to_Unicode(hindi_text)  
-    corrected_unicode = call_gemini_correct_text(  
-        unicode_text, language="hi", instruction=instruction, thinking_mode=thinking  
-    )  
-    corrected_krutidev = Unicode_to_KrutiDev(corrected_unicode)  
+        unicode_text = KrutiDev_to_Unicode(hindi_text)
+        corrected_unicode = call_gemini_correct_text(
+            unicode_text, language="hi", instruction=instruction, thinking_mode=thinking
+        )
+        corrected_krutidev = Unicode_to_KrutiDev(corrected_unicode)
 
-    escaped_krutidev = escape(corrected_krutidev)  
+        escaped_krutidev = escape(corrected_krutidev)
 
-    html = f"""
-
+        html = f"""
 <html>  
 <head>  
 <meta charset="utf-8">  
@@ -166,24 +169,26 @@ function copyToClipboard(id) {{
 </script>  
 </body>  
 </html>  
-"""  
-        return HTMLResponse(html)  
-    except Exception as e:  
-        logger.error(f"convert_hindi error: {e}", exc_info=True)  
-        return HTMLResponse(f"<pre>Error: {str(e)}</pre>", status_code=500)  @app.post("/convert-english", response_class=HTMLResponse)
+"""
+        return HTMLResponse(html)
+    except Exception as e:
+        logger.error(f"convert_hindi error: {e}", exc_info=True)
+        return HTMLResponse(f"<pre>Error: {str(e)}</pre>", status_code=500)
+
+
+@app.post("/convert-english", response_class=HTMLResponse)
 def convert_english(
-english_text: str = Form(...),
-instruction: str = Form(""),
-thinking_mode: Optional[str] = Form(None)
+    english_text: str = Form(...),
+    instruction: str = Form(""),
+    thinking_mode: Optional[str] = Form(None)
 ):
-try:
-thinking = thinking_mode == "on"
-corrected = call_gemini_correct_text(
-english_text, language="en", instruction=instruction, thinking_mode=thinking
-)
+    try:
+        thinking = thinking_mode == "on"
+        corrected = call_gemini_correct_text(
+            english_text, language="en", instruction=instruction, thinking_mode=thinking
+        )
 
-html = f"""
-
+        html = f"""
 <html>  
 <head><meta charset="utf-8"><title>English Result</title>  
 <style>body{{font-family:Arial,sans-serif;max-width:900px;margin:24px auto;padding:12px;}} pre{{font-family:monospace;font-size:14px;border:1px solid #ddd;padding:10px;border-radius:4px;}}</style>  
@@ -198,43 +203,48 @@ html = f"""
 <script>function copyToClipboard(id){{navigator.clipboard.writeText(document.getElementById(id).innerText).then(()=>alert('Copied!'));}}</script>  
 </body>  
 </html>  
-"""  
-        return HTMLResponse(html)  
-    except Exception as e:  
-        logger.error(f"convert_english error: {e}", exc_info=True)  
-        return HTMLResponse(f"<pre>Error: {str(e)}</pre>", status_code=500)  API routes (Word macro ke liye unchanged)
+"""
+        return HTMLResponse(html)
+    except Exception as e:
+        logger.error(f"convert_english error: {e}", exc_info=True)
+        return HTMLResponse(f"<pre>Error: {str(e)}</pre>", status_code=500)
 
+
+# API routes (Word macro ke liye unchanged)
 @app.post("/api/hindi")
 def api_hindi(hindi_text: str, instruction: str = ""):
-unicode_text = KrutiDev_to_Unicode(hindi_text)
-corrected_unicode = call_gemini_correct_text(unicode_text, language="hi", instruction=instruction)
-corrected_krutidev = Unicode_to_KrutiDev(corrected_unicode)
-return {
-"input_krutidev": hindi_text,
-"corrected_mangal": corrected_unicode,
-"corrected_krutidev": corrected_krutidev,
-}
+    unicode_text = KrutiDev_to_Unicode(hindi_text)
+    corrected_unicode = call_gemini_correct_text(unicode_text, language="hi", instruction=instruction)
+    corrected_krutidev = Unicode_to_KrutiDev(corrected_unicode)
+    return {
+        "input_krutidev": hindi_text,
+        "corrected_mangal": corrected_unicode,
+        "corrected_krutidev": corrected_krutidev,
+    }
+
 
 @app.post("/api/word-macro-hindi")
 def word_macro_hindi(json_body: HindiRequest = Body(...)):
-text = (json_body.hindi_text or "").strip()
-instr = (json_body.instruction or "").strip()
-if not text:
-raise HTTPException(400, "Missing hindi_text")
-unicode_text = KrutiDev_to_Unicode(text)
-corrected_unicode = call_gemini_correct_text(unicode_text, language="hi", instruction=instr)
-corrected_krutidev = Unicode_to_KrutiDev(corrected_unicode)
-return {
-"input_krutidev": text,
-"corrected_mangal": corrected_unicode,
-"corrected_krutidev": corrected_krutidev,
-}
+    text = (json_body.hindi_text or "").strip()
+    instr = (json_body.instruction or "").strip()
+    if not text:
+        raise HTTPException(400, "Missing hindi_text")
+    unicode_text = KrutiDev_to_Unicode(text)
+    corrected_unicode = call_gemini_correct_text(unicode_text, language="hi", instruction=instr)
+    corrected_krutidev = Unicode_to_KrutiDev(corrected_unicode)
+    return {
+        "input_krutidev": text,
+        "corrected_mangal": corrected_unicode,
+        "corrected_krutidev": corrected_krutidev,
+    }
+
 
 @app.post("/api/english")
 def api_english(english_text: str, instruction: str = ""):
-corrected = call_gemini_correct_text(english_text, language="en", instruction=instruction)
-return {"corrected": corrected}
+    corrected = call_gemini_correct_text(english_text, language="en", instruction=instruction)
+    return {"corrected": corrected}
+
 
 if __name__ == "__main__":
-import uvicorn
-uvicorn.run(app, host="0.0.0.0", port=8000)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
