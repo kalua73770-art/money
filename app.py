@@ -27,7 +27,7 @@ logger = logging.getLogger("krutidev-converter")
 
 app = FastAPI()
 
-Pydantic model for Word macro
+#Pydantic model for Word macro
 
 class HindiRequest(BaseModel):
 hindi_text: str = ""
